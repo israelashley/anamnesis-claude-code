@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "anamnesis": {
+      "type": "http",
+      "url": "https://anamnesis.smtry.ai/mcp",
+      "authServerMetadataUrl": "https://anamnesis.smtry.ai/.well-known/oauth-authorization-server"
+    }
+  }
+}

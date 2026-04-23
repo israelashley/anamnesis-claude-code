@@ -1,0 +1,22 @@
+{
+  "name": "smtry",
+  "owner": {
+    "name": "smtry.ai",
+    "url": "https://anamnesis.smtry.ai"
+  },
+  "metadata": {
+    "description": "Smtry's Claude Code marketplace. Currently hosts anamnesis — persistent encrypted memory for Claude Code with deterministic lifecycle-hook capture.",
+    "version": "0.3.0"
+  },
+  "plugins": [
+    {
+      "name": "anamnesis",
+      "source": "./plugins/anamnesis",
+      "description": "Persistent, encrypted memory for Claude Code. Deterministic capture via SessionStart/UserPromptSubmit/Stop/SessionEnd hooks. Per-user HKDF-derived keys — vendor cannot decrypt your memory. OAuth 2.1 + PKCE connector auth (0.3.0): first connect opens a browser for consent, tokens land in the system keychain, nothing in shell env. Visible, searchable, deletable memory surface at anamnesis.smtry.ai.",
+      "version": "0.3.0",
+      "keywords": ["memory", "mcp", "hooks", "persistent", "encryption", "anamnesis", "smtry"],
+      "homepage": "https://anamnesis.smtry.ai",
+      "license": "MIT"
+    }
+  ]
+}

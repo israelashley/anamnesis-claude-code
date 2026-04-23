@@ -1,0 +1,42 @@
+{
+  "name": "anamnesis",
+  "version": "0.3.0",
+  "description": "Persistent memory for Claude Code — deterministic capture via lifecycle hooks. Per-user encrypted, visible, deletable. 0.3.0 migrates the MCP connector to OAuth 2.1 + PKCE + DCR per MCP 2025-11-25: first connect opens a browser for consent on anamnesis.smtry.ai, tokens live in the system keychain, no handle in URL. Hook auth still uses X-Anamnesis-Key pending a separate migration before the 2026-05-20 legacy cutoff.",
+  "author": {
+    "name": "smtry.ai",
+    "url": "https://anamnesis.smtry.ai"
+  },
+  "homepage": "https://anamnesis.smtry.ai",
+  "license": "MIT",
+  "keywords": ["memory", "mcp", "hooks", "persistent", "encryption"],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.sh" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stop.sh" }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-end.sh" }
+        ]
+      }
+    ]
+  }
+}

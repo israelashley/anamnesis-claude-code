@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# anamnesis-config — one-time setup for the Anamnesis Claude Code plugin.
+# Collects api_key + handle, validates against the server, writes
+# ~/.anamnesis/config.json with mode 0600.
+#
+# Usage:
+#   anamnesis-config                                   (interactive)
+#   anamnesis-config --api-key anm_... --handle jia    (scripted)
+#   anamnesis-config --server https://alt.example.com  (self-host)
+
+set -eu
+
+ANAMNESIS_HOME="${ANAMNESIS_HOME:-$HOME/.anamnesis}"
+ANAMNESIS_CONFIG="$ANAMNESIS_HOME/config.json"
+DEFAULT_SERVER="https://anamnesis.smtry.ai"
+
+API_KEY=""
+HANDLE=""
+SERVER="$DEFAULT_SERVER"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --api-key)  API_KEY="$2"; shift 2 ;;
+        --handle)   HANDLE="$2"; shift 2 ;;
+        --server)   SERVER="$2"; shift 2 ;;
+        --help|-h)
+            sed -n '2,8p' "$0" | sed 's/^# //; s/^#//'
+            exit 0 ;;
+        *) echo "unknown flag: $1" >&2; exit 2 ;;
+    esac
+done
+
+# --- dependency check ---
+for dep in curl jq; do
+    if ! command -v "$dep" >/dev/null 2>&1; then
+        echo "anamnesis-config: missing required tool: $dep" >&2
+        echo "  install via:  brew install $dep   (macOS)  or  apt-get install $dep" >&2
+        exit 2
+    fi
+done
+
+# --- interactive prompts for anything not flagged ---
+if [ -z "$API_KEY" ]; then
+    printf "Anamnesis API key (starts with anm_, visible at %s/account): " "$SERVER"
+    # -s so the key doesn't echo to terminal
+    stty -echo 2>/dev/null || true
+    read -r API_KEY
+    stty echo 2>/dev/null || true
+    echo
+fi
+
+if [ -z "$API_KEY" ]; then
+    echo "anamnesis-config: api_key required" >&2
+    exit 2
+fi
+
+if [ -z "$HANDLE" ]; then
+    printf "Handle (short slug for the MCP connector URL, e.g. 'jia'): "
+    read -r HANDLE
+fi
+
+if [ -z "$HANDLE" ]; then
+    echo "anamnesis-config: handle required" >&2
+    exit 2
+fi
+
+# --- validate against server ---
+echo "Validating against $SERVER …"
+STATUS="$(curl -sS -o /tmp/anamnesis_cfg_probe.$$ -w '%{http_code}' \
+    -X POST "$SERVER/mcp/tools/get_memory_stats" \
+    --max-time 10 \
+    -H "X-Anamnesis-Key: $API_KEY" \
+    -H "Content-Type: application/json" \
+    --data '{}' 2>/dev/null || echo "000")"
+
+case "$STATUS" in
+    2*)
+        echo "  OK (HTTP $STATUS)"
+        ;;
+    401|403)
+        echo "  FAILED: HTTP $STATUS — api_key rejected. Double-check the key at $SERVER/account." >&2
+        rm -f /tmp/anamnesis_cfg_probe.$$ 2>/dev/null || true
+        exit 1
+        ;;
+    000)
+        echo "  FAILED: could not reach $SERVER. Check your network / server URL." >&2
+        rm -f /tmp/anamnesis_cfg_probe.$$ 2>/dev/null || true
+        exit 1
+        ;;
+    *)
+        echo "  WARNING: HTTP $STATUS — proceeding anyway (server may be degraded)." >&2
+        ;;
+esac
+rm -f /tmp/anamnesis_cfg_probe.$$ 2>/dev/null || true
+
+# --- write config ---
+mkdir -p "$ANAMNESIS_HOME"
+chmod 700 "$ANAMNESIS_HOME"
+
+TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+jq -n \
+    --arg api_key "$API_KEY" \
+    --arg handle "$HANDLE" \
+    --arg server "$SERVER" \
+    --arg ts "$TS" \
+    '{api_key: $api_key, handle: $handle, server_url: $server, created_at: $ts}' \
+    > "$ANAMNESIS_CONFIG"
+chmod 600 "$ANAMNESIS_CONFIG"
+
+cat <<EOM
+
+Anamnesis config written to $ANAMNESIS_CONFIG (mode 0600).
+
+Open a new Claude Code session. On the first MCP tool call, your browser
+opens $SERVER/oauth/authorize — paste your api_key, approve the three
+scopes (memory.read, memory.write, memory.delete), and return to the
+terminal. The OAuth access token is stored in your system keychain, not
+in shell env or any config file.
+
+Hooks fire deterministically on SessionStart, every prompt, every turn,
+and SessionEnd. Run 'anamnesis pause' to suspend capture; delete
+$ANAMNESIS_HOME/paused to resume.
+
+Your memory is visible, searchable, and deletable at:
+    $SERVER/memory
+
+EOM

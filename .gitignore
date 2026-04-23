@@ -1,0 +1,17 @@
+# Local development artifacts
+*.log
+.DS_Store
+.env
+.env.local
+
+# Test/scratch output
+/tmp-scratch/
+/.test-artifacts/
+
+# Editor cruft
+.vscode/
+.idea/
+*.swp
+
+# Claude Code per-machine permission state (never commit — user-specific)
+.claude/settings.local.json

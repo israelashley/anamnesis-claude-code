@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# anamnesis — convenience CLI for pause/resume/status.
+# Concrete control surface (ADR-062 §12.2 — one of the six defensible axes).
+
+set -eu
+
+ANAMNESIS_HOME="${ANAMNESIS_HOME:-$HOME/.anamnesis}"
+PAUSE_FILE="$ANAMNESIS_HOME/paused"
+CONFIG="$ANAMNESIS_HOME/config.json"
+
+SUB="${1:-status}"
+
+case "$SUB" in
+    pause)
+        mkdir -p "$ANAMNESIS_HOME"
+        date -u +"%Y-%m-%dT%H:%M:%SZ" > "$PAUSE_FILE"
+        chmod 600 "$PAUSE_FILE" 2>/dev/null || true
+        echo "anamnesis: paused. Hooks will silently exit 0 until you resume."
+        echo "           'anamnesis resume' to re-enable."
+        ;;
+    resume)
+        rm -f "$PAUSE_FILE"
+        echo "anamnesis: resumed."
+        ;;
+    status)
+        if [ ! -r "$CONFIG" ]; then
+            echo "anamnesis: not configured. Run: anamnesis-config"
+            exit 1
+        fi
+        if [ -f "$PAUSE_FILE" ]; then
+            echo "anamnesis: PAUSED since $(cat "$PAUSE_FILE" 2>/dev/null)"
+        else
+            echo "anamnesis: active"
+        fi
+        if command -v jq >/dev/null 2>&1; then
+            echo "  handle:     $(jq -r '.handle' < "$CONFIG" 2>/dev/null)"
+            echo "  server:     $(jq -r '.server_url' < "$CONFIG" 2>/dev/null)"
+            echo "  configured: $(jq -r '.created_at' < "$CONFIG" 2>/dev/null)"
+        fi
+        echo "  visit:      $(jq -r '.server_url' < "$CONFIG" 2>/dev/null)/memory"
+        ;;
+    help|--help|-h)
+        cat <<USAGE
+anamnesis — memory control surface
+
+  anamnesis pause    suspend capture (hooks become no-ops)
+  anamnesis resume   re-enable capture
+  anamnesis status   show config + pause state (default)
+
+Full memory browse / search / delete:  https://anamnesis.smtry.ai/memory
+USAGE
+        ;;
+    *)
+        echo "anamnesis: unknown subcommand '$SUB'. Try: anamnesis help" >&2
+        exit 2
+        ;;
+esac
