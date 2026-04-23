@@ -1,7 +1,7 @@
 {
   "name": "anamnesis",
-  "version": "0.3.0",
-  "description": "Persistent memory for Claude Code — deterministic capture via lifecycle hooks. Per-user encrypted, visible, deletable. 0.3.0 migrates the MCP connector to OAuth 2.1 + PKCE + DCR per MCP 2025-11-25: first connect opens a browser for consent on anamnesis.smtry.ai, tokens live in the system keychain, no handle in URL. Hook auth still uses X-Anamnesis-Key pending a separate migration before the 2026-05-20 legacy cutoff.",
+  "version": "0.3.1",
+  "description": "Persistent memory for Claude Code — deterministic capture via lifecycle hooks. Per-user encrypted, visible, deletable. 0.3.1 completes the OAuth 2.1 + PKCE + DCR migration: 'anamnesis-config' runs the browser consent flow, and hook auth uses Authorization: Bearer with automatic refresh-token rotation. Legacy X-Anamnesis-Key fallback kept for existing installs through the 2026-05-20 deprecation cutoff — re-run 'anamnesis-config' to upgrade.",
   "author": {
     "name": "smtry.ai",
     "url": "https://anamnesis.smtry.ai"

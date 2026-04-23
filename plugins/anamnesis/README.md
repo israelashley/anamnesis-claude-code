@@ -15,17 +15,22 @@ your api_key. Browse, search, and delete any memory at
 Then, once:
 
 ```
-anamnesis-config                  # interactive — paste api_key + handle
+anamnesis-config                  # interactive — opens browser for OAuth consent
 ```
 
-Open a new Claude Code session. On the first MCP tool call, your browser
-opens `anamnesis.smtry.ai/oauth/authorize` — paste your api_key, approve
-the three scopes (`memory.read`, `memory.write`, `memory.delete`), and
-return to the terminal. The OAuth access token lives in your system
-keychain (macOS) / credentials file (Linux/Windows); it is never written
-to a config file or shell env. On the same session the `SessionStart`
-hook fires, probes the server, and drains any queued uploads from prior
-crashes.
+`anamnesis-config` starts a loopback server, registers a Dynamic Client
+(RFC 7591), opens your browser to `anamnesis.smtry.ai/oauth/authorize`,
+and catches the redirect. You paste your api_key on the consent page,
+approve the scopes (`memory.read memory.write` by default — add
+`--allow-delete` to also request `memory.delete`), and return to the
+terminal. The access + refresh tokens land in `~/.anamnesis/config.json`
+(mode 0600); hooks rotate the refresh token automatically before
+expiry, so the setup is one-and-done.
+
+Scripted installs (CI, headless servers) can skip the browser with
+`anamnesis-config --api-key anm_... --handle jia`, but the legacy
+`X-Anamnesis-Key` header path is deprecated — it returns 401 after
+**2026-05-20**. Re-run `anamnesis-config` without flags before then.
 
 ## What the hooks do
 
@@ -37,7 +42,9 @@ crashes.
 | `SessionEnd` | Session close | Calls `session_close`, advancing the server-side pipeline (episodes → echoes). Clears the session marker. |
 
 All four are POSIX shell scripts that use `curl` + `jq`. No Node, no
-Python, no compiled binaries.
+compiled binaries. `python3` is only required once, by `anamnesis-config`,
+for the PKCE loopback server during the OAuth consent flow — hooks
+themselves stay shell-only.
 
 ## Control surface
 
@@ -81,7 +88,7 @@ input — because those patterns are correct. What's ours:
 
 | Path | Contents | Mode |
 |------|----------|------|
-| `~/.anamnesis/config.json` | api_key, handle, server_url | 0600 |
+| `~/.anamnesis/config.json` | OAuth: handle, server_url, access_token, refresh_token, expires_at, client_id. Legacy: api_key, handle, server_url. | 0600 |
 | `~/.anamnesis/current_session.json` | session_id for the live session | 0600 |
 | `~/.anamnesis/paused` | present ⇒ hooks exit 0 silently | 0600 |
 | `~/.anamnesis/pending_uploads/*.json` | queued payloads from prior failures; drained on next SessionStart | 0600 |

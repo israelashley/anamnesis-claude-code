@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
 # anamnesis-config — one-time setup for the Anamnesis Claude Code plugin.
-# Collects api_key + handle, validates against the server, writes
-# ~/.anamnesis/config.json with mode 0600.
+#
+# Interactive mode (default): runs the OAuth 2.1 + PKCE browser flow.
+#   Opens anamnesis.smtry.ai/oauth/authorize in your browser, you paste
+#   your api_key once, approve the scopes, return to the terminal.
+#   Access + refresh tokens land in ~/.anamnesis/config.json (mode 0600);
+#   no api_key ever stored. This is the target end-state for the
+#   2026-05-20 legacy-auth deprecation.
+#
+# Scripted mode (legacy, deprecating 2026-05-20):
+#   --api-key anm_... --handle jia    store api_key directly, skip OAuth.
+#   Kept for CI / headless installs during the migration window. Prints a
+#   deprecation hint; switch to interactive mode before 2026-05-20.
 #
 # Usage:
-#   anamnesis-config                                   (interactive)
-#   anamnesis-config --api-key anm_... --handle jia    (scripted)
+#   anamnesis-config                                   (interactive OAuth)
+#   anamnesis-config --handle jia                      (prefill handle)
+#   anamnesis-config --allow-delete                    (also request memory.delete scope)
+#   anamnesis-config --api-key anm_... --handle jia    (scripted, legacy)
 #   anamnesis-config --server https://alt.example.com  (self-host)
 
 set -eu
@@ -17,20 +29,24 @@ DEFAULT_SERVER="https://anamnesis.smtry.ai"
 API_KEY=""
 HANDLE=""
 SERVER="$DEFAULT_SERVER"
+ALLOW_DELETE="0"
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --api-key)  API_KEY="$2"; shift 2 ;;
-        --handle)   HANDLE="$2"; shift 2 ;;
-        --server)   SERVER="$2"; shift 2 ;;
+        --api-key)       API_KEY="$2"; shift 2 ;;
+        --handle)        HANDLE="$2"; shift 2 ;;
+        --server)        SERVER="$2"; shift 2 ;;
+        --allow-delete)  ALLOW_DELETE="1"; shift ;;
         --help|-h)
-            sed -n '2,8p' "$0" | sed 's/^# //; s/^#//'
+            sed -n '2,24p' "$0" | sed 's/^# //; s/^#//'
             exit 0 ;;
         *) echo "unknown flag: $1" >&2; exit 2 ;;
     esac
 done
 
 # --- dependency check ---
+# curl + jq are always needed. python3 is needed for OAuth (interactive
+# mode only); scripted mode can skip the check.
 for dep in curl jq; do
     if ! command -v "$dep" >/dev/null 2>&1; then
         echo "anamnesis-config: missing required tool: $dep" >&2
@@ -39,83 +55,295 @@ for dep in curl jq; do
     fi
 done
 
-# --- interactive prompts for anything not flagged ---
-if [ -z "$API_KEY" ]; then
-    printf "Anamnesis API key (starts with anm_, visible at %s/account): " "$SERVER"
-    # -s so the key doesn't echo to terminal
-    stty -echo 2>/dev/null || true
-    read -r API_KEY
-    stty echo 2>/dev/null || true
-    echo
+# Scopes the plugin requests. memory.read + memory.write cover all four
+# hook paths (remember_episode on write, retrieve_memories on read).
+# memory.delete is opt-in via --allow-delete because users reasonably
+# want to inspect deletions in the web UI first.
+SCOPES="memory.read memory.write"
+if [ "$ALLOW_DELETE" = "1" ]; then
+    SCOPES="memory.read memory.write memory.delete"
 fi
 
-if [ -z "$API_KEY" ]; then
-    echo "anamnesis-config: api_key required" >&2
-    exit 2
-fi
-
+# --- handle prompt (needed for both modes — MCP connector URL uses it) ---
 if [ -z "$HANDLE" ]; then
     printf "Handle (short slug for the MCP connector URL, e.g. 'jia'): "
     read -r HANDLE
 fi
-
 if [ -z "$HANDLE" ]; then
     echo "anamnesis-config: handle required" >&2
     exit 2
 fi
 
-# --- validate against server ---
-echo "Validating against $SERVER …"
-STATUS="$(curl -sS -o /tmp/anamnesis_cfg_probe.$$ -w '%{http_code}' \
-    -X POST "$SERVER/mcp/tools/get_memory_stats" \
-    --max-time 10 \
-    -H "X-Anamnesis-Key: $API_KEY" \
-    -H "Content-Type: application/json" \
-    --data '{}' 2>/dev/null || echo "000")"
+# =============================================================================
+# SCRIPTED / LEGACY MODE — skip OAuth if --api-key was given.
+# =============================================================================
+if [ -n "$API_KEY" ]; then
+    echo "anamnesis-config: --api-key mode is deprecated and stops working 2026-05-20." >&2
+    echo "                  Run without --api-key for the OAuth flow." >&2
+    echo
 
-case "$STATUS" in
-    2*)
-        echo "  OK (HTTP $STATUS)"
-        ;;
-    401|403)
-        echo "  FAILED: HTTP $STATUS — api_key rejected. Double-check the key at $SERVER/account." >&2
-        rm -f /tmp/anamnesis_cfg_probe.$$ 2>/dev/null || true
-        exit 1
-        ;;
-    000)
-        echo "  FAILED: could not reach $SERVER. Check your network / server URL." >&2
-        rm -f /tmp/anamnesis_cfg_probe.$$ 2>/dev/null || true
-        exit 1
-        ;;
-    *)
-        echo "  WARNING: HTTP $STATUS — proceeding anyway (server may be degraded)." >&2
-        ;;
-esac
-rm -f /tmp/anamnesis_cfg_probe.$$ 2>/dev/null || true
+    echo "Validating against $SERVER …"
+    STATUS="$(curl -sS -o /tmp/anamnesis_cfg_probe.$$ -w '%{http_code}' \
+        -X POST "$SERVER/mcp/tools/get_memory_stats" \
+        --max-time 10 \
+        -H "X-Anamnesis-Key: $API_KEY" \
+        -H "Content-Type: application/json" \
+        --data '{}' 2>/dev/null || echo "000")"
+    rm -f /tmp/anamnesis_cfg_probe.$$ 2>/dev/null || true
+    case "$STATUS" in
+        2*)      echo "  OK (HTTP $STATUS)" ;;
+        401|403) echo "  FAILED: HTTP $STATUS — api_key rejected." >&2; exit 1 ;;
+        000)     echo "  FAILED: could not reach $SERVER." >&2; exit 1 ;;
+        *)       echo "  WARNING: HTTP $STATUS — proceeding." >&2 ;;
+    esac
+
+    mkdir -p "$ANAMNESIS_HOME"
+    chmod 700 "$ANAMNESIS_HOME"
+    TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    jq -n \
+        --arg api_key "$API_KEY" \
+        --arg handle  "$HANDLE" \
+        --arg server  "$SERVER" \
+        --arg ts      "$TS" \
+        '{api_key: $api_key, handle: $handle, server_url: $server, created_at: $ts, auth_mode: "legacy"}' \
+        > "$ANAMNESIS_CONFIG"
+    chmod 600 "$ANAMNESIS_CONFIG"
+
+    cat <<EOM
+
+Anamnesis config written to $ANAMNESIS_CONFIG (mode 0600) in LEGACY mode.
+
+Re-run 'anamnesis-config' (without --api-key) before 2026-05-20 to upgrade
+to the OAuth flow. After that date, api_key header auth returns 401.
+
+Your memory is visible, searchable, and deletable at:
+    $SERVER/memory
+
+EOM
+    exit 0
+fi
+
+# =============================================================================
+# INTERACTIVE / OAUTH MODE — the target flow.
+# =============================================================================
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "anamnesis-config: python3 required for the OAuth flow (not found in PATH)." >&2
+    echo "  install via:  brew install python   (macOS)  or  apt-get install python3" >&2
+    echo "  or use legacy mode:  anamnesis-config --api-key anm_... --handle $HANDLE" >&2
+    exit 2
+fi
+
+echo "Anamnesis OAuth setup — this opens a browser to $SERVER/oauth/authorize."
+echo "You will paste your api_key once (visible at $SERVER/account) and approve"
+echo "the requested scopes. Tokens land in ~/.anamnesis/config.json (mode 0600)."
+echo
+
+# Single Python block handles the full PKCE dance:
+#   1. Bind a loopback server on an ephemeral port (OS picks)
+#   2. Register a DCR client with that exact redirect_uri
+#   3. Generate PKCE verifier + S256 challenge
+#   4. Open the user's browser to /oauth/authorize
+#   5. Catch the redirect, extract code + state (state is verified)
+#   6. POST /oauth/token to exchange code for access + refresh tokens
+#   7. Print the token JSON to stdout for bash to pick up
+#
+# Everything in one process avoids fragile port-handoff between shells.
+# Errors go to stderr as plain text; success is a single JSON line on stdout.
+#
+# Writing to a tempfile instead of $(python3 <<PY) because macOS ships
+# bash 3.2 (2007), whose parser mis-tokenizes quoted heredoc bodies
+# containing embedded quotes when wrapped in command substitution.
+OAUTH_TMP="$(mktemp 2>/dev/null || printf '/tmp/anamnesis_oauth_%s' $$)"
+trap "rm -f '$OAUTH_TMP'" EXIT
+SERVER="$SERVER" SCOPES="$SCOPES" python3 > "$OAUTH_TMP" <<'PY'
+import base64, hashlib, http.server, json, os, secrets, socket
+import sys, threading, urllib.parse, urllib.request, urllib.error, webbrowser
+
+SERVER = os.environ["SERVER"].rstrip("/")
+SCOPES = os.environ["SCOPES"]
+TIMEOUT = 180  # seconds to wait for the user to complete the consent flow
+
+def die(msg, code=1):
+    print(f"oauth: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+# 1) Bind loopback first so we know the port for the redirect_uri.
+received = {}
+ready = threading.Event()
+
+class CallbackHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a, **kw): pass  # silence default stderr chatter
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path != "/callback":
+            self.send_response(404); self.end_headers(); return
+        qs = urllib.parse.parse_qs(parsed.query)
+        received.update({k: v[0] for k, v in qs.items()})
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        body = (
+            b"<!doctype html><html><head><meta charset='utf-8'>"
+            b"<title>Anamnesis connected</title></head>"
+            b"<body style='font-family:-apple-system,sans-serif;background:#000;color:#eef0f6;"
+            b"display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;'>"
+            b"<div style='text-align:center;padding:40px;max-width:480px;'>"
+            b"<h1 style='font-size:22px;margin:0 0 10px;color:#9b5cff;'>Anamnesis connected.</h1>"
+            b"<p style='color:rgba(160,175,200,0.75);font-size:14px;margin:0;'>"
+            b"You can close this tab and return to your terminal.</p></div></body></html>"
+        )
+        self.wfile.write(body)
+        ready.set()
+
+server = http.server.HTTPServer(("127.0.0.1", 0), CallbackHandler)
+port = server.server_address[1]
+redirect_uri = f"http://127.0.0.1:{port}/callback"
+t = threading.Thread(target=server.serve_forever, daemon=True)
+t.start()
+
+def http_json(method, path, body=None, headers=None, form=False):
+    url = f"{SERVER}{path}" if path.startswith("/") else path
+    data = None
+    hdrs = dict(headers or {})
+    if body is not None:
+        if form:
+            data = urllib.parse.urlencode(body).encode()
+            hdrs.setdefault("Content-Type", "application/x-www-form-urlencoded")
+        else:
+            data = json.dumps(body).encode()
+            hdrs.setdefault("Content-Type", "application/json")
+    req = urllib.request.Request(url, data=data, method=method, headers=hdrs)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.load(e)
+        except Exception:
+            return e.code, {"error": f"http_{e.code}", "error_description": e.reason}
+    except urllib.error.URLError as e:
+        die(f"could not reach {SERVER}: {e.reason}")
+
+# 2) Register a DCR client with our exact loopback redirect_uri.
+status, rec = http_json("POST", "/oauth/register", body={
+    "redirect_uris":   [redirect_uri],
+    "client_name":     "Anamnesis Claude Code plugin (CLI)",
+    "grant_types":     ["authorization_code", "refresh_token"],
+    "response_types":  ["code"],
+    "token_endpoint_auth_method": "none",
+})
+if status >= 300 or "client_id" not in rec:
+    die(f"/oauth/register failed: {status} {rec.get('error_description') or rec}")
+client_id = rec["client_id"]
+
+# 3) PKCE challenge.
+verifier  = secrets.token_urlsafe(64)[:128]
+challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+state     = secrets.token_urlsafe(16)
+
+# 4) Open browser to /oauth/authorize.
+authz_url = f"{SERVER}/oauth/authorize?" + urllib.parse.urlencode({
+    "response_type":         "code",
+    "client_id":             client_id,
+    "redirect_uri":          redirect_uri,
+    "scope":                 SCOPES,
+    "state":                 state,
+    "code_challenge":        challenge,
+    "code_challenge_method": "S256",
+})
+print(f"Opening {authz_url[:72]}… in your browser.", file=sys.stderr)
+print(f"(If nothing opened, paste that URL manually.)", file=sys.stderr)
+try:
+    webbrowser.open(authz_url)
+except Exception:
+    pass
+
+# 5) Wait for the callback.
+if not ready.wait(timeout=TIMEOUT):
+    die(f"timed out after {TIMEOUT}s waiting for browser consent")
+server.shutdown()
+
+if "error" in received:
+    die(f"authorization denied: {received.get('error')} — {received.get('error_description', '')}")
+if received.get("state") != state:
+    die("state mismatch — possible CSRF, aborting")
+code = received.get("code")
+if not code:
+    die("no authorization code in callback")
+
+# 6) Exchange code → tokens.
+status, tok = http_json("POST", "/oauth/token", form=True, body={
+    "grant_type":    "authorization_code",
+    "code":          code,
+    "redirect_uri":  redirect_uri,
+    "client_id":     client_id,
+    "code_verifier": verifier,
+})
+if status >= 300 or "access_token" not in tok:
+    die(f"/oauth/token failed: {status} {tok.get('error_description') or tok}")
+
+# 7) Emit result for bash.
+print(json.dumps({
+    "access_token":  tok["access_token"],
+    "refresh_token": tok.get("refresh_token", ""),
+    "expires_in":    tok.get("expires_in", 3600),
+    "scope":         tok.get("scope", SCOPES),
+    "client_id":     client_id,
+}))
+PY
+OAUTH_RESULT="$(cat "$OAUTH_TMP" 2>/dev/null || true)"
+
+if [ -z "$OAUTH_RESULT" ]; then
+    echo "anamnesis-config: OAuth flow did not complete." >&2
+    exit 1
+fi
+
+ACCESS_TOKEN="$(printf '%s' "$OAUTH_RESULT"  | jq -r '.access_token')"
+REFRESH_TOKEN="$(printf '%s' "$OAUTH_RESULT" | jq -r '.refresh_token')"
+EXPIRES_IN="$(printf '%s' "$OAUTH_RESULT"    | jq -r '.expires_in')"
+GRANTED_SCOPE="$(printf '%s' "$OAUTH_RESULT" | jq -r '.scope')"
+CLIENT_ID="$(printf '%s' "$OAUTH_RESULT"     | jq -r '.client_id')"
 
 # --- write config ---
 mkdir -p "$ANAMNESIS_HOME"
 chmod 700 "$ANAMNESIS_HOME"
 
-TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+TS_NOW="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+# Compute expires_at as absolute epoch seconds so refresh logic can check
+# it trivially without timezone math. 60s safety margin baked into the
+# refresh predicate, not here.
+EXPIRES_AT="$(date -u -v+"${EXPIRES_IN}"S +"%s" 2>/dev/null \
+           || date -u -d "+${EXPIRES_IN} seconds" +"%s" 2>/dev/null \
+           || echo 0)"
+
 jq -n \
-    --arg api_key "$API_KEY" \
-    --arg handle "$HANDLE" \
-    --arg server "$SERVER" \
-    --arg ts "$TS" \
-    '{api_key: $api_key, handle: $handle, server_url: $server, created_at: $ts}' \
+    --arg handle         "$HANDLE" \
+    --arg server         "$SERVER" \
+    --arg access_token   "$ACCESS_TOKEN" \
+    --arg refresh_token  "$REFRESH_TOKEN" \
+    --argjson expires_at "${EXPIRES_AT:-0}" \
+    --arg scope          "$GRANTED_SCOPE" \
+    --arg client_id      "$CLIENT_ID" \
+    --arg ts             "$TS_NOW" \
+    '{
+        handle:        $handle,
+        server_url:    $server,
+        access_token:  $access_token,
+        refresh_token: $refresh_token,
+        expires_at:    $expires_at,
+        scope:         $scope,
+        client_id:     $client_id,
+        created_at:    $ts,
+        auth_mode:     "oauth"
+    }' \
     > "$ANAMNESIS_CONFIG"
 chmod 600 "$ANAMNESIS_CONFIG"
 
 cat <<EOM
 
 Anamnesis config written to $ANAMNESIS_CONFIG (mode 0600).
-
-Open a new Claude Code session. On the first MCP tool call, your browser
-opens $SERVER/oauth/authorize — paste your api_key, approve the three
-scopes (memory.read, memory.write, memory.delete), and return to the
-terminal. The OAuth access token is stored in your system keychain, not
-in shell env or any config file.
+Auth mode: OAuth 2.1 + PKCE. Scopes granted: $GRANTED_SCOPE.
+Access token expires in ${EXPIRES_IN}s; refresh token rotates automatically on every use.
 
 Hooks fire deterministically on SessionStart, every prompt, every turn,
 and SessionEnd. Run 'anamnesis pause' to suspend capture; delete
