@@ -28,9 +28,10 @@ fi
 
 # Query knobs. Keep conservative in v0: hierarchical/standard, 5 engrams,
 # min_similarity 0.35 to cut weak matches.
-QUERY_BODY="$(jq -n \
-    --arg q "$PROMPT" \
-    '{query: $q, top_n: 5, mode: "hierarchical", detail_level: "standard", min_similarity: 0.35, diversity: 0.3}')"
+# Prompt goes over stdin (-Rs), not --arg: a large pasted prompt as jq
+# argv would hit ARG_MAX and silently kill retrieval for that turn.
+QUERY_BODY="$(printf '%s' "$PROMPT" | jq -Rs \
+    '{query: ., top_n: 5, mode: "hierarchical", detail_level: "standard", min_similarity: 0.35, diversity: 0.3}')"
 
 RESPONSE="$(anamnesis_post "/mcp/tools/retrieve_memories" "$QUERY_BODY")"
 POST_STATUS=$?

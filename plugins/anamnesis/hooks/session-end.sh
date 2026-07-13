@@ -21,6 +21,19 @@ STDIN_JSON="$(cat 2>/dev/null || true)"
 REASON="$(printf '%s' "$STDIN_JSON" | jq -r '.reason // "exit"' 2>/dev/null)"
 [ -z "$REASON" ] && REASON="exit"
 
+# Stop's capture worker runs in the background (0.3.2). Give the final
+# turn's upload a moment to land before session_close triggers reflection —
+# otherwise that content waits for the nightly batch. Wait ≤15s for a live
+# worker, then proceed regardless (reflection is idempotent, batch is the
+# backstop).
+TRANSCRIPT_PATH="$(printf '%s' "$STDIN_JSON" | jq -r '.transcript_path // empty' 2>/dev/null)"
+if [ -n "$TRANSCRIPT_PATH" ]; then
+    KEY="$(anamnesis_transcript_key "$TRANSCRIPT_PATH")"
+    if anamnesis_lock_acquire "$KEY" 30; then
+        anamnesis_lock_release "$KEY"
+    fi
+fi
+
 BODY="$(jq -n --arg sid "$SID" --arg reason "$REASON" \
     '{session_id: $sid, reason: $reason}')"
 
