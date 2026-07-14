@@ -1,7 +1,7 @@
 {
   "name": "anamnesis",
-  "version": "0.3.1",
-  "description": "Persistent memory for Claude Code — deterministic capture via lifecycle hooks. Per-user encrypted, visible, deletable. 0.3.1 completes the OAuth 2.1 + PKCE + DCR migration: 'anamnesis-config' runs the browser consent flow, and hook auth uses Authorization: Bearer with automatic refresh-token rotation. Legacy X-Anamnesis-Key fallback kept for existing installs through the 2026-05-20 deprecation cutoff — re-run 'anamnesis-config' to upgrade.",
+  "version": "0.3.2",
+  "description": "Persistent memory for Claude Code — deterministic capture via lifecycle hooks. Per-user encrypted, visible, deletable. 0.3.2 makes the Stop hook non-blocking and incremental: capture runs in a detached background worker and ships only the transcript lines added since the last turn (per-transcript high-water mark + lock), instead of re-sending the whole transcript and every historical usage row on every Stop. Also fixes ARG_MAX-related silent failures on large payloads (curl/jq bodies now go over stdin) and garbage-collects unreplayable queue files. OAuth 2.1 + PKCE + DCR via 'anamnesis-config'; legacy X-Anamnesis-Key fallback kept through the 2026-05-20 deprecation cutoff.",
   "author": {
     "name": "smtry.ai",
     "url": "https://anamnesis.smtry.ai"

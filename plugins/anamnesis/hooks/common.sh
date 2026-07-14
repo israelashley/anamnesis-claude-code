@@ -232,14 +232,18 @@ anamnesis_post() {
     tmp_headers="$(mktemp 2>/dev/null || printf '/tmp/anamnesis_h_%s' $$)"
     tmp_body="$(mktemp 2>/dev/null || printf '/tmp/anamnesis_b_%s' $$)"
     local status
-    status="$(curl -sS -X POST "$url" \
+    # Body goes over stdin (--data-binary @-), never argv: transcript
+    # payloads exceed ARG_MAX (~1MB on macOS), and passing them as an
+    # argument made exec fail before curl ever ran — every large
+    # log_session silently died with status 000.
+    status="$(printf '%s' "$body" | curl -sS -X POST "$url" \
         --max-time "$ANAMNESIS_CURL_TIMEOUT" \
         -H "$auth_header" \
         -H "Content-Type: application/json" \
         -D "$tmp_headers" \
         -o "$tmp_body" \
         -w "%{http_code}" \
-        --data-binary "$body" 2>/dev/null)" || status="000"
+        --data-binary @- 2>/dev/null)" || status="000"
 
     # Pick up authoritative server time from Date: header
     ANAMNESIS_SERVER_TIME="$(grep -i '^date:' "$tmp_headers" 2>/dev/null | head -1 | sed 's/^[Dd]ate:[[:space:]]*//; s/\r$//')"
@@ -256,18 +260,23 @@ anamnesis_post() {
 
 # --- queue drain ----------------------------------------------------------
 # Replays any pending_uploads/*.json files (created by prior hook failures).
+# Files that can't be parsed into a replayable {path, body} pair are dead —
+# delete them so they don't accumulate (the pre-0.3.2 queue writer left
+# hundreds of 0-byte husks behind).
 anamnesis_drain_queue() {
     local count=0
     for f in "$ANAMNESIS_QUEUE_DIR"/*.json; do
-        [ -r "$f" ] || continue
+        [ -e "$f" ] || continue
         local path body
         path="$(jq -r '.path // empty' < "$f" 2>/dev/null)"
-        body="$(jq -c '.body' < "$f" 2>/dev/null)"
-        if [ -n "$path" ] && [ -n "$body" ]; then
-            if anamnesis_post "$path" "$body" >/dev/null; then
-                rm -f "$f"
-                count=$((count + 1))
-            fi
+        body="$(jq -c '.body // empty' < "$f" 2>/dev/null)"
+        if [ -z "$path" ] || [ -z "$body" ] || [ "$body" = "null" ]; then
+            rm -f "$f" 2>/dev/null || true
+            continue
+        fi
+        if anamnesis_post "$path" "$body" >/dev/null; then
+            rm -f "$f"
+            count=$((count + 1))
         fi
     done
     [ $count -gt 0 ] && anamnesis_log_error "queue_drained" "$count payloads replayed"
@@ -280,7 +289,59 @@ anamnesis_queue_payload() {
     local body="$2"
     local f
     f="$ANAMNESIS_QUEUE_DIR/$(date +%s)_$$_$RANDOM.json"
-    jq -n --arg path "$path" --argjson body "$body" \
-        '{path: $path, body: $body, queued_at: (now | todate)}' \
-        > "$f" 2>/dev/null || true
+    # Body goes over stdin: as a jq argv it hits ARG_MAX on large payloads,
+    # and the failed exec left an empty file behind (redirect opens first).
+    if ! printf '%s' "$body" | jq -c --arg path "$path" \
+        '{path: $path, body: ., queued_at: (now | todate)}' \
+        > "$f" 2>/dev/null; then
+        rm -f "$f" 2>/dev/null || true
+        anamnesis_log_error "queue_write_failed" "$path"
+    fi
+}
+
+# --- transcript state + locks ----------------------------------------------
+# Incremental Stop capture keeps a per-transcript high-water mark under
+# $ANAMNESIS_STATE_DIR, and a mkdir lock serializes the background workers
+# that update it (overlapping Stops must not double-send a delta). Lock
+# waits only ever happen off the critical path — background workers and
+# SessionEnd — so they never delay a prompt or a turn.
+ANAMNESIS_STATE_DIR="$ANAMNESIS_HOME/stop_state"
+
+anamnesis_transcript_key() {
+    # Stable filesystem-safe key for a transcript path.
+    if command -v shasum >/dev/null 2>&1; then
+        printf '%s' "$1" | shasum -a 256 | cut -c1-16
+    elif command -v sha256sum >/dev/null 2>&1; then
+        printf '%s' "$1" | sha256sum | cut -c1-16
+    else
+        printf '%s' "$1" | cksum | awk '{print $1}'
+    fi
+}
+
+# Usage: anamnesis_lock_acquire <key> [max_half_seconds]
+# Returns 1 if the lock is still held by a LIVE process after the wait;
+# locks whose recorded pid is dead are stolen (a killed worker must not
+# wedge capture forever).
+anamnesis_lock_acquire() {
+    local lock="$ANAMNESIS_STATE_DIR/$1.lock"
+    local max="${2:-240}"
+    local waited=0
+    mkdir -p "$ANAMNESIS_STATE_DIR" 2>/dev/null || true
+    while ! mkdir "$lock" 2>/dev/null; do
+        local holder
+        holder="$(cat "$lock/pid" 2>/dev/null)"
+        if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+            rm -rf "$lock" 2>/dev/null || true
+            continue
+        fi
+        waited=$((waited + 1))
+        [ "$waited" -gt "$max" ] && return 1
+        sleep 0.5 2>/dev/null || sleep 1
+    done
+    printf '%s' "$$" > "$lock/pid" 2>/dev/null || true
+    return 0
+}
+
+anamnesis_lock_release() {
+    rm -rf "$ANAMNESIS_STATE_DIR/$1.lock" 2>/dev/null || true
 }
