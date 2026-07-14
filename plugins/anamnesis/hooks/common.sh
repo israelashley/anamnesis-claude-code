@@ -220,7 +220,8 @@ anamnesis_post() {
         auth_header="Authorization: Bearer ${ANAMNESIS_ACCESS_TOKEN}"
     else
         # Legacy path — one nag/day. Suppress if already warned today.
-        local warn_marker="$ANAMNESIS_HOME/.legacy_auth_warned_$(date -u +%Y%m%d)"
+        local warn_marker
+        warn_marker="$ANAMNESIS_HOME/.legacy_auth_warned_$(date -u +%Y%m%d)"
         if [ ! -f "$warn_marker" ]; then
             anamnesis_log_error "legacy_auth_deprecated" "X-Anamnesis-Key stops working 2026-05-20 — run 'anamnesis-config' to upgrade"
             touch "$warn_marker" 2>/dev/null || true
@@ -245,7 +246,10 @@ anamnesis_post() {
         -w "%{http_code}" \
         --data-binary @- 2>/dev/null)" || status="000"
 
-    # Pick up authoritative server time from Date: header
+    # Pick up authoritative server time from Date: header. Read by the
+    # sourcing hook (user-prompt-submit's <current-datetime> anchor) — not
+    # dead, despite what single-file lint sees.
+    # shellcheck disable=SC2034
     ANAMNESIS_SERVER_TIME="$(grep -i '^date:' "$tmp_headers" 2>/dev/null | head -1 | sed 's/^[Dd]ate:[[:space:]]*//; s/\r$//')"
 
     cat "$tmp_body" 2>/dev/null

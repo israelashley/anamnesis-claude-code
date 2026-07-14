@@ -1,0 +1,8 @@
+# The plugin is bash + jq + curl (no package manifest) — only the CI
+# actions themselves need version tracking here.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

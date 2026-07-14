@@ -1,0 +1,76 @@
+# Plugin CI — hook syntax, shellcheck, and the end-to-end promises.
+#
+# The <server-time> anchor shipped broken for ~3 months because nothing
+# ever ran the hook and looked at its output. The e2e job below does
+# exactly that: run each hook the way Claude Code does, assert the
+# contract holds. If the datetime assertion here goes red, the product's
+# bare-minimum promise is broken — do not ship.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n every hook
+        run: |
+          for f in plugins/anamnesis/hooks/*.sh; do
+            bash -n "$f"
+            echo "syntax OK: $f"
+          done
+      - name: shellcheck
+        run: |
+          shellcheck -x -S warning plugins/anamnesis/hooks/*.sh
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: UserPromptSubmit always emits a datetime anchor (offline)
+        run: |
+          # Config points at a closed port: server unreachable, so this
+          # exercises the fail-open path — the anchor must STILL go out,
+          # from the local clock. This exact assertion would have caught
+          # the subshell bug that shipped silent for three months.
+          export ANAMNESIS_HOME="$(mktemp -d)"
+          export ANAMNESIS_CURL_TIMEOUT=2
+          cat > "$ANAMNESIS_HOME/config.json" <<'EOF'
+          {"handle":"ci","server_url":"http://127.0.0.1:9","access_token":"x","refresh_token":"y","expires_at":9999999999,"client_id":"c"}
+          EOF
+          OUT="$(echo '{"prompt":"ci probe"}' | plugins/anamnesis/hooks/user-prompt-submit.sh)"
+          echo "$OUT"
+          echo "$OUT" | jq -e '.hookSpecificOutput.additionalContext | contains("<current-datetime")' > /dev/null
+          echo "$OUT" | jq -e '.hookSpecificOutput.additionalContext | test("local=\"(Mon|Tue|Wed|Thu|Fri|Sat|Sun),")' > /dev/null
+          echo "datetime anchor: OK (day-of-week present, offline fallback works)"
+
+      - name: Stop hook returns immediately and never blocks
+        run: |
+          export ANAMNESIS_HOME="$(mktemp -d)"
+          export ANAMNESIS_CURL_TIMEOUT=2
+          cat > "$ANAMNESIS_HOME/config.json" <<'EOF'
+          {"handle":"ci","server_url":"http://127.0.0.1:9","access_token":"x","refresh_token":"y","expires_at":9999999999,"client_id":"c"}
+          EOF
+          TRANSCRIPT="$(mktemp)"
+          echo '{"type":"assistant","uuid":"u1","message":{"id":"m1","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1,"output_tokens":1}}}' > "$TRANSCRIPT"
+          START=$(date +%s)
+          printf '{"transcript_path":"%s"}' "$TRANSCRIPT" | plugins/anamnesis/hooks/stop.sh
+          ELAPSED=$(( $(date +%s) - START ))
+          echo "stop.sh returned in ${ELAPSED}s"
+          test "$ELAPSED" -le 2   # non-blocking contract: instant return, work in background
+
+      - name: Hooks exit 0 with no config (fresh install must not break Claude Code)
+        run: |
+          export ANAMNESIS_HOME="$(mktemp -d)"
+          echo '{"prompt":"x"}' | plugins/anamnesis/hooks/user-prompt-submit.sh
+          echo '{}' | plugins/anamnesis/hooks/stop.sh
+          echo '{}' | plugins/anamnesis/hooks/session-start.sh
+          echo '{"reason":"exit"}' | plugins/anamnesis/hooks/session-end.sh
+          echo "all hooks fail open cleanly"
