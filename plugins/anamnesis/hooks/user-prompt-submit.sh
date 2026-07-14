@@ -33,20 +33,32 @@ fi
 QUERY_BODY="$(printf '%s' "$PROMPT" | jq -Rs \
     '{query: ., top_n: 5, mode: "hierarchical", detail_level: "standard", min_similarity: 0.35, diversity: 0.3}')"
 
-RESPONSE="$(anamnesis_post "/mcp/tools/retrieve_memories" "$QUERY_BODY")"
+# Call anamnesis_post in the CURRENT shell, not $(...): the function sets
+# ANAMNESIS_SERVER_TIME from the response Date: header, and a command
+# substitution runs it in a subshell where that assignment dies. This is
+# why <server-time> never fired once in 0.3.1/0.3.2 — the variable was
+# always empty by the time the emit code looked at it.
+RESPONSE_FILE="$(mktemp 2>/dev/null || printf '/tmp/anamnesis_r_%s' $$)"
+anamnesis_post "/mcp/tools/retrieve_memories" "$QUERY_BODY" > "$RESPONSE_FILE"
 POST_STATUS=$?
+RESPONSE="$(cat "$RESPONSE_FILE" 2>/dev/null)"
+rm -f "$RESPONSE_FILE" 2>/dev/null || true
+
+# The date/time anchor is unconditional — it goes out on success, failure,
+# and no-match turns alike. An LLM mid-session has no other way to know a
+# night passed between two prompts. Server time (authoritative, UTC) when
+# we got a response; the local clock is always present and carries the
+# day-of-week + timezone.
+TIME_LINE="$(printf '<current-datetime local="%s"%s source="anamnesis"/>' \
+    "$(date '+%a, %d %b %Y %H:%M:%S %z')" \
+    "${ANAMNESIS_SERVER_TIME:+ server-utc=\"$ANAMNESIS_SERVER_TIME\"}")"
 
 if [ $POST_STATUS -ne 0 ]; then
     anamnesis_log_error "retrieve_failed" "status=$POST_STATUS"
-    # Fail-open: still emit the time anchor so the model at least knows
-    # what day it is. Authoritative server time from the Date: header we
-    # captured in anamnesis_post, even on failure paths (will be empty if
-    # we couldn't reach the server at all).
-    if [ -n "${ANAMNESIS_SERVER_TIME:-}" ]; then
-        ADDL=$(printf '<server-time source="anamnesis">%s</server-time>' "$ANAMNESIS_SERVER_TIME")
-        jq -n --arg ctx "$ADDL" \
-            '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}}'
-    fi
+    # Fail-open: the time anchor still goes out — local clock at minimum,
+    # server UTC too if the failed exchange still returned a Date: header.
+    jq -n --arg ctx "$TIME_LINE" \
+        '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}}'
     exit 0
 fi
 
@@ -76,17 +88,11 @@ if [ "$ENGRAM_COUNT" -gt 0 ]; then
     ADDL="$(printf '<anamnesis-context source="anamnesis" count="%s">\n%s\n</anamnesis-context>' "$ENGRAM_COUNT" "$BODY")"
 fi
 
-if [ -n "${ANAMNESIS_SERVER_TIME:-}" ]; then
-    TIME_LINE="$(printf '<server-time source="anamnesis">%s</server-time>' "$ANAMNESIS_SERVER_TIME")"
-    if [ -n "$ADDL" ]; then
-        ADDL="$ADDL"$'\n'"$TIME_LINE"
-    else
-        ADDL="$TIME_LINE"
-    fi
-fi
-
-if [ -z "$ADDL" ]; then
-    exit 0
+# Time anchor rides along on every turn, engrams or not.
+if [ -n "$ADDL" ]; then
+    ADDL="$ADDL"$'\n'"$TIME_LINE"
+else
+    ADDL="$TIME_LINE"
 fi
 
 # Final self-cap: trim to 2000 chars. If somehow we're over (shouldn't be
