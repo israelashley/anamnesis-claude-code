@@ -1,40 +1,58 @@
 {
   "name": "anamnesis",
-  "version": "0.3.2",
-  "description": "Persistent memory for Claude Code — deterministic capture via lifecycle hooks. Per-user encrypted, visible, deletable. 0.3.2 makes the Stop hook non-blocking and incremental: capture runs in a detached background worker and ships only the transcript lines added since the last turn (per-transcript high-water mark + lock), instead of re-sending the whole transcript and every historical usage row on every Stop. Also fixes ARG_MAX-related silent failures on large payloads (curl/jq bodies now go over stdin) and garbage-collects unreplayable queue files. OAuth 2.1 + PKCE + DCR via 'anamnesis-config'; legacy X-Anamnesis-Key fallback kept through the 2026-05-20 deprecation cutoff.",
+  "version": "0.3.3",
+  "description": "Persistent memory for Claude Code — deterministic capture via lifecycle hooks. Per-user encrypted, visible, deletable. 0.3.3 fixes the date/time anchor: a subshell bug meant <server-time> had never fired once — every prompt now carries <current-datetime> with day-of-week, local timezone, and server UTC (local clock as offline fallback), unconditionally. 0.3.2 made Stop capture non-blocking and incremental (background worker, per-transcript high-water mark) and fixed ARG_MAX silent upload failures. OAuth 2.1 + PKCE + DCR via 'anamnesis-config'.",
   "author": {
     "name": "smtry.ai",
     "url": "https://anamnesis.smtry.ai"
   },
   "homepage": "https://anamnesis.smtry.ai",
   "license": "MIT",
-  "keywords": ["memory", "mcp", "hooks", "persistent", "encryption"],
+  "keywords": [
+    "memory",
+    "mcp",
+    "hooks",
+    "persistent",
+    "encryption"
+  ],
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh" }
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh"
+          }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.sh" }
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.sh"
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stop.sh" }
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stop.sh"
+          }
         ]
       }
     ],
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-end.sh" }
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-end.sh"
+          }
         ]
       }
     ]

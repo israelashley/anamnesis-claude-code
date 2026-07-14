@@ -6,15 +6,23 @@
   },
   "metadata": {
     "description": "Smtry's Claude Code marketplace. Currently hosts anamnesis — persistent encrypted memory for Claude Code with deterministic lifecycle-hook capture.",
-    "version": "0.3.2"
+    "version": "0.3.3"
   },
   "plugins": [
     {
       "name": "anamnesis",
       "source": "./plugins/anamnesis",
-      "description": "Persistent, encrypted memory for Claude Code. Deterministic capture via SessionStart/UserPromptSubmit/Stop/SessionEnd hooks. Per-user HKDF-derived keys — vendor cannot decrypt your memory. 0.3.2 makes capture non-blocking and incremental: Stop runs in a detached background worker and ships only the transcript lines added since the last turn, and large uploads no longer silently die on ARG_MAX. OAuth 2.1 + PKCE end-to-end via 'anamnesis-config'; hooks send Authorization: Bearer with automatic refresh rotation (legacy X-Anamnesis-Key sunset 2026-05-20). Visible, searchable, deletable memory surface at anamnesis.smtry.ai.",
-      "version": "0.3.2",
-      "keywords": ["memory", "mcp", "hooks", "persistent", "encryption", "anamnesis", "smtry"],
+      "description": "Persistent, encrypted memory for Claude Code. Deterministic capture via SessionStart/UserPromptSubmit/Stop/SessionEnd hooks. Per-user HKDF-derived keys — vendor cannot decrypt your memory. 0.3.3 fixes the date/time anchor (never fired due to a subshell bug — every prompt now carries <current-datetime> with day-of-week, local tz + server UTC). 0.3.2 made capture non-blocking and incremental: Stop runs in a detached background worker and ships only the transcript lines added since the last turn, and large uploads no longer silently die on ARG_MAX. OAuth 2.1 + PKCE end-to-end via 'anamnesis-config'; hooks send Authorization: Bearer with automatic refresh rotation (legacy X-Anamnesis-Key sunset 2026-05-20). Visible, searchable, deletable memory surface at anamnesis.smtry.ai.",
+      "version": "0.3.3",
+      "keywords": [
+        "memory",
+        "mcp",
+        "hooks",
+        "persistent",
+        "encryption",
+        "anamnesis",
+        "smtry"
+      ],
       "homepage": "https://anamnesis.smtry.ai",
       "license": "MIT"
     }
