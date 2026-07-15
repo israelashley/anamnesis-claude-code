@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # anamnesis/hooks/user-prompt-submit.sh
-# Fires before every user turn. Retrieves top-k engrams + injects them
+# Fires before every user turn. Retrieves memory headlines + injects them
 # plus a server-time anchor as hookSpecificOutput.additionalContext.
 #
 # Design constraints (ADR-062 §8):
@@ -62,30 +62,33 @@ if [ $POST_STATUS -ne 0 ]; then
     exit 0
 fi
 
-# Parse top engrams. Pull from .engrams (hierarchical) or .results (flat).
-# Filter: only items with .content present; keep top 5 after server scoring.
-ENGRAMS_JSON="$(printf '%s' "$RESPONSE" | jq -c '
-    def pick:
-        if (.content // null) != null then {score: (.score // 0), content: .content}
-        elif (.text // null) != null    then {score: (.score // 0), content: .text}
-        else empty end;
-    ((.engrams // []) + (.results // [])) | map(pick) | .[0:5]
+# Build injection lines. Prefer the server's pre-formatted `headlines`
+# (server 2026-07-15+): one plain-text line per hit that cleared the
+# similarity floor — substance first, ~half the tokens of raw bodies.
+# Fall back to extracting hit bodies for older servers. NOTE the fallback
+# reads `.body` — hits never had a `.content` field, so 0.3.0–0.3.3 filtered
+# every hit out and per-prompt memory injection silently never fired.
+LINES_JSON="$(printf '%s' "$RESPONSE" | jq -c '
+    if ((.headlines // []) | length) > 0 then
+        [.headlines[] | tostring | .[0:220]]
+    else
+        [ ((.engrams // []) + (.results // []))[]
+          | (.body // .content // .text // empty)
+          | tostring | gsub("\n"; " ") | .[0:220] ]
+    end | .[0:5]
 ' 2>/dev/null)"
 
-ENGRAM_COUNT="$(printf '%s' "$ENGRAMS_JSON" | jq 'length' 2>/dev/null)"
-ENGRAM_COUNT="${ENGRAM_COUNT:-0}"
+LINE_COUNT="$(printf '%s' "$LINES_JSON" | jq 'length' 2>/dev/null)"
+LINE_COUNT="${LINE_COUNT:-0}"
 
 # Build additionalContext.
-# If we have engrams: <anamnesis-context> block + <server-time> anchor.
-# If we don't: server-time only. Never both empty.
+# If we have memory lines: <anamnesis-context> block + time anchor.
+# If we don't: time anchor only. Never both empty.
 ADDL=""
-if [ "$ENGRAM_COUNT" -gt 0 ]; then
-    # Format each engram as a bullet. Cap per-engram at 350 chars to stay
-    # under the 2000-char self-cap in aggregate (5 * 350 = 1750 + wrapper).
-    BODY="$(printf '%s' "$ENGRAMS_JSON" | jq -r '
-        .[] | "- (" + ((.score | tostring)[0:5]) + ") " + (.content | gsub("\n"; " ") | .[0:350])
-    ' 2>/dev/null)"
-    ADDL="$(printf '<anamnesis-context source="anamnesis" count="%s">\n%s\n</anamnesis-context>' "$ENGRAM_COUNT" "$BODY")"
+if [ "$LINE_COUNT" -gt 0 ]; then
+    # 5 lines * 220 chars + wrapper stays well under the 2000-char self-cap.
+    BODY="$(printf '%s' "$LINES_JSON" | jq -r '.[] | "- " + .' 2>/dev/null)"
+    ADDL="$(printf '<anamnesis-context source="anamnesis" count="%s">\n%s\n</anamnesis-context>' "$LINE_COUNT" "$BODY")"
 fi
 
 # Time anchor rides along on every turn, engrams or not.
