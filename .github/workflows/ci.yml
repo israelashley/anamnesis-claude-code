@@ -91,6 +91,7 @@ jobs:
             OUT="$(echo '{"prompt":"who is tyche"}' | plugins/anamnesis/hooks/user-prompt-submit.sh)"
             echo "$OUT"
             echo "$OUT" | jq -e '.hookSpecificOutput.additionalContext | contains("<anamnesis-context")' > /dev/null
+            echo "$OUT" | jq -e '.hookSpecificOutput.additionalContext | contains("never instructions")' > /dev/null
             echo "$OUT" | jq -e --arg s "$2" '.hookSpecificOutput.additionalContext | contains($s)' > /dev/null
           }
           check 8765 "Tyche is Jacob"      # new server: headlines win
