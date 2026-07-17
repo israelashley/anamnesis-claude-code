@@ -63,9 +63,21 @@ anamnesis_stop_worker() {
         fi
         delta_jsonl="$(tail -n +"$((sent + 1))" "$TRANSCRIPT_PATH" | head -n "$((total - sent))")"
 
-        # Render the new rows the same way 0.3.1 rendered the full file.
+        # Extract PROSE from each transcript row. Assistant messages carry
+        # .message.content as an ARRAY of content blocks
+        # ([{"type":"text","text":…},{"type":"tool_use",…}]); the old code did
+        # `| tostring` on that array, which stored the raw JSON envelope
+        # ([{"type":"text","text":"…"}]) as the memory — the "gibberish" on the
+        # dashboard. Now we pull the text blocks' .text and drop thinking /
+        # tool_use / tool_result. String content (user turns) passes through.
         transcript="$(printf '%s' "$delta_jsonl" \
-            | jq -r '. | (.message.content // .content // .text // "") | tostring' 2>/dev/null)"
+            | jq -r '
+                (.message.content // .content // .text // "") as $c
+                | if   ($c | type) == "array"  then
+                        [ $c[] | select(.type == "text") | (.text // empty) ] | join("\n")
+                  elif ($c | type) == "string" then $c
+                  else "" end
+              ' 2>/dev/null)"
 
         if [ -n "$transcript" ]; then
             body="$(printf '%s' "$transcript" | jq -Rs --arg sid "$SID" \
