@@ -262,6 +262,39 @@ anamnesis_post() {
     esac
 }
 
+# --- authenticated GET ----------------------------------------------------
+# Usage: anamnesis_get <path-with-query>
+# Writes response body to stdout. Same auth selection as anamnesis_post.
+# Returns 0 on 2xx, 2 on 401/403, 1 otherwise.
+anamnesis_get() {
+    local path="$1"
+    local url="${ANAMNESIS_SERVER_URL}${path}"
+    local auth_header
+
+    if [ "${ANAMNESIS_AUTH_MODE:-legacy}" = "oauth" ]; then
+        anamnesis_ensure_token || true
+        auth_header="Authorization: Bearer ${ANAMNESIS_ACCESS_TOKEN}"
+    else
+        auth_header="X-Anamnesis-Key: ${ANAMNESIS_API_KEY}"
+    fi
+
+    local tmp_body status
+    tmp_body="$(mktemp 2>/dev/null || printf '/tmp/anamnesis_g_%s' $$)"
+    status="$(curl -sS -X GET "$url" \
+        --max-time "$ANAMNESIS_CURL_TIMEOUT" \
+        -H "$auth_header" \
+        -o "$tmp_body" \
+        -w "%{http_code}" 2>/dev/null)" || status="000"
+    cat "$tmp_body" 2>/dev/null
+    rm -f "$tmp_body" 2>/dev/null || true
+
+    case "$status" in
+        2*) return 0 ;;
+        401|403) return 2 ;;
+        *) return 1 ;;
+    esac
+}
+
 # --- queue drain ----------------------------------------------------------
 # Replays any pending_uploads/*.json files (created by prior hook failures).
 # Files that can't be parsed into a replayable {path, body} pair are dead —
