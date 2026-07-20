@@ -42,6 +42,13 @@ if ! anamnesis_post "/mcp/tools/session_close" "$BODY" >/dev/null; then
     anamnesis_log_error "session_close_queued" "sid=$SID reason=$REASON"
 fi
 
+# Receipt housekeeping (ADR-070): this session's rate-limit markers are
+# spent, and any unconsumed pending capture receipt must not leak into the
+# next session. Prune sweeps markers from sessions that never ended cleanly.
+rm -f "$ANAMNESIS_RECEIPT_DIR/$(anamnesis_transcript_key "$SID")".* \
+      "$ANAMNESIS_RECEIPT_DIR/pending_capture.json" 2>/dev/null || true
+anamnesis_receipt_prune
+
 # Clear the session marker regardless — a new SessionStart will regenerate.
 anamnesis_clear_session_id
 

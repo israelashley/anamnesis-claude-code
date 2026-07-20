@@ -84,7 +84,7 @@ jobs:
           import time; time.sleep(3600)
           PY
           sleep 1
-          check() {  # $1 = port, $2 = string that must appear in the injection
+          check() {  # $1 = port, $2 = string that must appear, $3 = receipt expected (yes|no)
             cat > "$ANAMNESIS_HOME/config.json" <<EOF
           {"handle":"ci","server_url":"http://127.0.0.1:$1","access_token":"x","refresh_token":"y","expires_at":9999999999,"client_id":"c"}
           EOF
@@ -93,10 +93,19 @@ jobs:
             echo "$OUT" | jq -e '.hookSpecificOutput.additionalContext | contains("<anamnesis-context")' > /dev/null
             echo "$OUT" | jq -e '.hookSpecificOutput.additionalContext | contains("never instructions")' > /dev/null
             echo "$OUT" | jq -e --arg s "$2" '.hookSpecificOutput.additionalContext | contains($s)' > /dev/null
+            # ADR-070 invariants: receipt text lives in systemMessage only —
+            # NEVER in additionalContext (receipts must cost 0 tokens) — and
+            # the class fires at most once per session.
+            if [ "$3" = yes ]; then
+              echo "$OUT" | jq -e '.systemMessage | contains("[anamnesis] recalled")' > /dev/null
+            else
+              echo "$OUT" | jq -e 'has("systemMessage") | not' > /dev/null
+            fi
+            echo "$OUT" | jq -e '.hookSpecificOutput.additionalContext | contains("[anamnesis]") | not' > /dev/null
           }
-          check 8765 "Tyche is Jacob"      # new server: headlines win
-          check 8766 "Fallback body fact"  # old server: body extraction
-          echo "memory injection: OK (headlines shape + body fallback)"
+          check 8765 "Tyche is Jacob"     yes  # new server: headlines win; first recall → receipt
+          check 8766 "Fallback body fact" no   # old server: body extraction; receipt rate-limited
+          echo "memory injection: OK (headlines shape + body fallback + zero-token receipt once)"
 
       - name: Stop hook returns immediately and never blocks
         run: |
@@ -112,6 +121,79 @@ jobs:
           ELAPSED=$(( $(date +%s) - START ))
           echo "stop.sh returned in ${ELAPSED}s"
           test "$ELAPSED" -le 2   # non-blocking contract: instant return, work in background
+
+      - name: Stop capture receipt is deferred, zero-token, once per session
+        run: |
+          # ADR-070: capture runs in a detached worker, so the receipt is
+          # deferred — the worker deposits an outcome file after a confirmed
+          # upload and the NEXT Stop surfaces it as systemMessage. Never any
+          # additionalContext from Stop, and the class fires once per session.
+          export ANAMNESIS_HOME="$(mktemp -d)"
+          export ANAMNESIS_CURL_TIMEOUT=5
+          python3 - <<'PY' &
+          import http.server
+          class H(http.server.BaseHTTPRequestHandler):
+              def do_POST(self):
+                  self.rfile.read(int(self.headers.get('Content-Length', 0) or 0))
+                  b = b'{"status":"ok"}'
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(b)))
+                  self.end_headers(); self.wfile.write(b)
+              def log_message(self, *a): pass
+          http.server.HTTPServer(("127.0.0.1", 8768), H).serve_forever()
+          PY
+          sleep 1
+          cat > "$ANAMNESIS_HOME/config.json" <<'EOF'
+          {"handle":"ci","server_url":"http://127.0.0.1:8768","access_token":"x","refresh_token":"y","expires_at":9999999999,"client_id":"c"}
+          EOF
+          echo '{"session_id":"s1","started_at":"t"}' > "$ANAMNESIS_HOME/current_session.json"
+          TRANSCRIPT="$(mktemp)"
+          echo '{"type":"assistant","uuid":"u1","message":{"id":"m1","content":[{"type":"text","text":"turn one"}],"usage":{"input_tokens":1,"output_tokens":1}}}' > "$TRANSCRIPT"
+          OUT1="$(printf '{"transcript_path":"%s"}' "$TRANSCRIPT" | plugins/anamnesis/hooks/stop.sh)"
+          test -z "$OUT1"   # first Stop: upload still in flight, nothing to surface yet
+          sleep 2           # let the detached worker land the capture + deposit
+          echo '{"type":"assistant","uuid":"u2","message":{"id":"m2","content":[{"type":"text","text":"turn two"}],"usage":{"input_tokens":1,"output_tokens":1}}}' >> "$TRANSCRIPT"
+          OUT2="$(printf '{"transcript_path":"%s"}' "$TRANSCRIPT" | plugins/anamnesis/hooks/stop.sh)"
+          echo "second stop out: $OUT2"
+          echo "$OUT2" | jq -e '.systemMessage | contains("[anamnesis] session capture is live")' > /dev/null
+          echo "$OUT2" | jq -e 'has("hookSpecificOutput") | not' > /dev/null   # zero tokens: Stop never injects
+          sleep 2
+          echo '{"type":"assistant","uuid":"u3","message":{"id":"m3","content":[{"type":"text","text":"turn three"}],"usage":{"input_tokens":1,"output_tokens":1}}}' >> "$TRANSCRIPT"
+          OUT3="$(printf '{"transcript_path":"%s"}' "$TRANSCRIPT" | plugins/anamnesis/hooks/stop.sh)"
+          test -z "$OUT3"   # once per session: no second capture receipt
+          echo "capture receipt: OK (deferred, zero-token, once per session)"
+
+      - name: receipts=off silences receipts but never touches injection
+        run: |
+          # Quiet mode (ADR-070): visibility is a default, never a hostage.
+          # With receipts:"off" the memory injection must be byte-identical
+          # in kind — anamnesis-context still present — with no systemMessage.
+          export ANAMNESIS_HOME="$(mktemp -d)"
+          export ANAMNESIS_CURL_TIMEOUT=5
+          python3 - <<'PY' &
+          import http.server, json
+          payload = {"status": "ok", "headlines": ["[engram 2026-07-15] Quiet mode probe fact."]}
+          class H(http.server.BaseHTTPRequestHandler):
+              def do_POST(self):
+                  self.rfile.read(int(self.headers.get('Content-Length', 0) or 0))
+                  b = json.dumps(payload).encode()
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(b)))
+                  self.end_headers(); self.wfile.write(b)
+              def log_message(self, *a): pass
+          http.server.HTTPServer(("127.0.0.1", 8769), H).serve_forever()
+          PY
+          sleep 1
+          cat > "$ANAMNESIS_HOME/config.json" <<'EOF'
+          {"handle":"ci","server_url":"http://127.0.0.1:8769","access_token":"x","refresh_token":"y","expires_at":9999999999,"client_id":"c","receipts":"off"}
+          EOF
+          OUT="$(echo '{"prompt":"quiet mode probe"}' | plugins/anamnesis/hooks/user-prompt-submit.sh)"
+          echo "$OUT"
+          echo "$OUT" | jq -e '.hookSpecificOutput.additionalContext | contains("Quiet mode probe fact")' > /dev/null
+          echo "$OUT" | jq -e 'has("systemMessage") | not' > /dev/null
+          echo "quiet mode: OK (injection intact, receipts silent)"
 
       - name: SessionStart injects recovered cache on resume, not on startup
         run: |

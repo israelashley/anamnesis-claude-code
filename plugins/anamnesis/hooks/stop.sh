@@ -37,6 +37,27 @@ fi
 STDIN_JSON="$(cat)"
 TRANSCRIPT_PATH="$(printf '%s' "$STDIN_JSON" | jq -r '.transcript_path // empty' 2>/dev/null)"
 
+# Capture receipt (ADR-070): capture runs detached, so its receipt is
+# deferred — the worker deposits an outcome file after a confirmed upload and
+# the NEXT Stop (here, foreground, no network, no waiting) turns it into a
+# zero-token systemMessage. Once per session; the pending file is consumed
+# either way so it never goes stale across sessions.
+PENDING_RECEIPT="$ANAMNESIS_RECEIPT_DIR/pending_capture.json"
+if [ -f "$PENDING_RECEIPT" ]; then
+    R_SID="$(jq -r '.session_id // empty' < "$PENDING_RECEIPT" 2>/dev/null)"
+    R_TURNS="$(jq -r '.turns // 0' < "$PENDING_RECEIPT" 2>/dev/null)"
+    rm -f "$PENDING_RECEIPT" 2>/dev/null || true
+    case "$R_TURNS" in *[!0-9]*|"") R_TURNS=0 ;; esac
+    if [ "$R_SID" = "$SID" ] && [ "$R_TURNS" -gt 0 ] \
+        && [ "$(anamnesis_receipts_level)" = "normal" ] \
+        && anamnesis_receipt_once "capture"; then
+        NOUN="turns"
+        [ "$R_TURNS" -eq 1 ] && NOUN="turn"
+        jq -n --arg msg "[anamnesis] session capture is live — $R_TURNS $NOUN backed up so far. /clear is free whenever you want it." \
+            '{systemMessage: $msg}'
+    fi
+fi
+
 anamnesis_stop_worker() {
     local transcript body
 
@@ -82,7 +103,31 @@ anamnesis_stop_worker() {
         if [ -n "$transcript" ]; then
             body="$(printf '%s' "$transcript" | jq -Rs --arg sid "$SID" \
                 '{session_id: $sid, transcript: .}')"
-            if ! anamnesis_post "/mcp/tools/log_session" "$body" >/dev/null; then
+            if anamnesis_post "/mcp/tools/log_session" "$body" >/dev/null; then
+                # Receipt deposit (ADR-070): upload confirmed — leave the
+                # outcome for the next foreground Stop to surface. Skipped
+                # once the session's capture receipt has fired (the marker
+                # outlives the pending file). turns = prose-bearing rows in
+                # this delta, a real local measurement.
+                if ! anamnesis_receipt_fired "capture"; then
+                    local turns
+                    turns="$(printf '%s' "$delta_jsonl" | jq -s '
+                        [ .[]
+                          | (.message.content // .content // .text // "") as $c
+                          | (if   ($c | type) == "array"  then
+                                 ([ $c[] | select(.type == "text") | (.text // empty) ] | join("\n"))
+                             elif ($c | type) == "string" then $c
+                             else "" end)
+                          | select(length > 0) ] | length' 2>/dev/null)"
+                    case "$turns" in *[!0-9]*|"") turns=0 ;; esac
+                    if [ "$turns" -gt 0 ]; then
+                        mkdir -p "$ANAMNESIS_RECEIPT_DIR" 2>/dev/null || true
+                        jq -n --arg sid "$SID" --argjson t "$turns" \
+                            '{session_id: $sid, turns: $t}' \
+                            > "$ANAMNESIS_RECEIPT_DIR/pending_capture.json" 2>/dev/null || true
+                    fi
+                fi
+            else
                 anamnesis_queue_payload "/mcp/tools/log_session" "$body"
                 anamnesis_log_error "log_session_queued" "sid=$SID"
             fi

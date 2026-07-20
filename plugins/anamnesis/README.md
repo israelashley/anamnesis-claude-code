@@ -58,6 +58,36 @@ The `paused` sentinel file at `~/.anamnesis/paused` is the first thing
 every hook checks. Deleting the file resumes immediately. No daemon, no
 restart, no shell refresh needed.
 
+## Receipts — proof it's working, at zero token cost
+
+Occasionally the plugin prints a tagged status line in your terminal:
+
+```
+[anamnesis] recalled 4 memories for this prompt — context you didn't have to re-explain
+[anamnesis] session capture is live — 12 turns backed up so far. /clear is free whenever you want it.
+```
+
+Receipts are **state-triggered, never scheduled** — one fires because
+something measurable just happened (a recall served, a capture landed),
+at most once per session per kind. They are delivered through the hook
+`systemMessage` channel, which renders to *you* but is never added to
+the model's context: a receipt costs **0 tokens**, and CI asserts that
+receipt text can never appear in injected context.
+
+Why they exist: memory infrastructure is invisible precisely when it's
+working. Receipts are the visible heartbeat — and the capture receipt
+carries the practical tip that matters most: once your session is backed
+up, `/clear` is free. A fresh context window is cheaper *and* sharper,
+and Anamnesis is what makes clearing survivable.
+
+Tune them with the `receipts` key in `~/.anamnesis/config.json`:
+
+| Value | Effect |
+|-------|--------|
+| `"normal"` (default) | All receipt kinds. |
+| `"minimal"` | Reserved for high-value receipts only (context-pressure and compaction notices, coming in 0.4.x) — current informational receipts are silenced. |
+| `"off"` | No receipts, ever. Capture and recall behave identically — visibility is a default, never a hostage. |
+
 ## What makes this different from claude-mem and mem0
 
 The hook shape is borrowed — Stop-per-turn, fail-open, per-event JSON
@@ -92,6 +122,7 @@ input — because those patterns are correct. What's ours:
 | `~/.anamnesis/current_session.json` | session_id for the live session | 0600 |
 | `~/.anamnesis/paused` | present ⇒ hooks exit 0 silently | 0600 |
 | `~/.anamnesis/pending_uploads/*.json` | queued payloads from prior failures; drained on next SessionStart | 0600 |
+| `~/.anamnesis/receipt_state/` | receipt rate-limit markers + deferred capture-receipt outcome; swept at SessionEnd | 0600 |
 | `~/.anamnesis/hook_errors.log` | structured JSONL of transient errors — for debugging only | 0644 |
 
 All state is user-local and user-readable. Nothing in `.claude/settings.json`

@@ -382,3 +382,53 @@ anamnesis_lock_acquire() {
 anamnesis_lock_release() {
     rm -rf "$ANAMNESIS_STATE_DIR/$1.lock" 2>/dev/null || true
 }
+
+# --- receipts (ADR-070) -----------------------------------------------------
+# Zero-token, state-triggered user-visible status lines. A receipt goes out
+# ONLY as hook-output systemMessage — never additionalContext — so it is
+# rendered to the user and costs 0 tokens in the model's context. Per-class
+# markers under $ANAMNESIS_RECEIPT_DIR rate-limit each class to once per
+# session (without this even state-triggered receipts become wallpaper).
+ANAMNESIS_RECEIPT_DIR="$ANAMNESIS_HOME/receipt_state"
+
+# Level from config: normal (default) | minimal | off. The phase-1 classes
+# (recall, capture) are informational and fire only at "normal" — "minimal"
+# reserves the channel for the classes with money attached (context-pressure
+# advisor + compaction, ADR-070 phases 2-3).
+anamnesis_receipts_level() {
+    local lvl
+    lvl="$(jq -r '.receipts // "normal"' < "$ANAMNESIS_CONFIG" 2>/dev/null)"
+    case "$lvl" in
+        normal|minimal|off) printf '%s' "$lvl" ;;
+        *) printf 'normal' ;;
+    esac
+}
+
+anamnesis_receipt_marker() {
+    local sid
+    sid="$(anamnesis_read_session_id)"
+    printf '%s/%s.%s' "$ANAMNESIS_RECEIPT_DIR" \
+        "$(anamnesis_transcript_key "${sid:-nosid}")" "$1"
+}
+
+# Usage: anamnesis_receipt_once <class>
+# Returns 0 (and marks) the first time a class fires this session; 1 after.
+anamnesis_receipt_once() {
+    local marker
+    marker="$(anamnesis_receipt_marker "$1")"
+    mkdir -p "$ANAMNESIS_RECEIPT_DIR" 2>/dev/null || true
+    [ -e "$marker" ] && return 1
+    : > "$marker" 2>/dev/null || true
+    return 0
+}
+
+# Usage: anamnesis_receipt_fired <class> — true if the class already fired.
+anamnesis_receipt_fired() {
+    [ -e "$(anamnesis_receipt_marker "$1")" ]
+}
+
+# Session ids never repeat, so old markers are litter — sweep after 7 days.
+anamnesis_receipt_prune() {
+    [ -d "$ANAMNESIS_RECEIPT_DIR" ] || return 0
+    find "$ANAMNESIS_RECEIPT_DIR" -type f -mtime +7 -delete 2>/dev/null || true
+}

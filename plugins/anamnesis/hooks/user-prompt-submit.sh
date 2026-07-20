@@ -109,7 +109,24 @@ if [ "$ADDL_LEN" -gt $CAP ]; then
     ADDL="$(printf '%s' "$ADDL" | head -c $CAP)…"
 fi
 
-jq -n --arg ctx "$ADDL" \
-    '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}}'
+# Recall receipt (ADR-070): the first qualifying recall of the session gets a
+# proof-of-work line. systemMessage ONLY — it renders to the user and never
+# enters model context, so it costs 0 tokens. The count is the real number of
+# lines injected this turn, not an estimate.
+RECEIPT=""
+if [ "$LINE_COUNT" -gt 0 ] && [ "$(anamnesis_receipts_level)" = "normal" ] \
+    && anamnesis_receipt_once "recall"; then
+    NOUN="memories"
+    [ "$LINE_COUNT" -eq 1 ] && NOUN="memory"
+    RECEIPT="[anamnesis] recalled $LINE_COUNT $NOUN for this prompt — context you didn't have to re-explain"
+fi
+
+if [ -n "$RECEIPT" ]; then
+    jq -n --arg ctx "$ADDL" --arg msg "$RECEIPT" \
+        '{systemMessage: $msg, hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}}'
+else
+    jq -n --arg ctx "$ADDL" \
+        '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}}'
+fi
 
 exit 0
