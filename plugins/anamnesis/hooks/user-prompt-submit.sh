@@ -30,8 +30,18 @@ fi
 # min_similarity 0.35 to cut weak matches.
 # Prompt goes over stdin (-Rs), not --arg: a large pasted prompt as jq
 # argv would hit ARG_MAX and silently kill retrieval for that turn.
-QUERY_BODY="$(printf '%s' "$PROMPT" | jq -Rs \
-    '{query: ., top_n: 5, mode: "hierarchical", detail_level: "standard", min_similarity: 0.35, diversity: 0.3}')"
+#
+# session_id closes the ADR-063 mid-session loop: capture (stop.sh) already
+# stamps every log_session with this SID, but retrieval omitted it — so the
+# server's session_match was always False and tokens_saved_mid_session was
+# structurally 0 for every user. Threading the same SID here lets same-session
+# recall register as mid-session savings. The SID is short, so it rides --arg
+# safely (only the unbounded prompt needs stdin). Omitted when no session file
+# exists yet → server treats it as a plain long-term retrieval.
+SID="$(anamnesis_read_session_id)"
+QUERY_BODY="$(printf '%s' "$PROMPT" | jq -Rs --arg sid "$SID" \
+    '{query: ., top_n: 5, mode: "hierarchical", detail_level: "standard", min_similarity: 0.35, diversity: 0.3}
+     + (if $sid == "" then {} else {session_id: $sid} end)')"
 
 # Call anamnesis_post in the CURRENT shell, not $(...): the function sets
 # ANAMNESIS_SERVER_TIME from the response Date: header, and a command
