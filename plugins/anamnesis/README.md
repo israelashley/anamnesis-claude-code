@@ -93,10 +93,13 @@ Tune them with the `receipts` key in `~/.anamnesis/config.json`:
 The hook shape is borrowed — Stop-per-turn, fail-open, per-event JSON
 input — because those patterns are correct. What's ours:
 
-1. **Crypto posture.** Per-user HKDF-derived keys. Lose your api_key and
-   even smtry.ai cannot recover your memory. Competitors either ship
-   plaintext on disk (claude-mem) or hold the decryption key themselves
-   (mem0).
+1. **Crypto posture.** Per-user HKDF-derived keys — no master key, so a
+   bulk database compromise alone decrypts nothing. Not yet end-to-end:
+   client-held keys are the roadmap, and
+   [anamnesis.smtry.ai/security](https://anamnesis.smtry.ai/security)
+   says exactly who can decrypt what. Memory tools typically ship
+   plaintext on disk or manage keys entirely server-side; we publish the
+   boundary and the roadmap past it.
 2. **Pipeline structure.** Episodes → Echoes → Engrams with explicit
    quality gates and reject-and-audit. Low-signal content is quarantined
    with a reason, not silently curated.
@@ -147,9 +150,9 @@ rm -rf ~/.anamnesis   # optional — removes local config + queued uploads
 ```
 
 Delete your server-side memory at `anamnesis.smtry.ai/memory` if you
-want all traces gone. Deletes are cryptographic — content is written to
-disk encrypted under your key; when you delete we also drop the key
-reference, so recovery is structurally impossible.
+want all traces gone — deletion removes the encrypted files from the
+live store, and full account deletion is self-serve from the account
+page.
 
 ## License
 
