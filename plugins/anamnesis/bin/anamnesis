@@ -19,8 +19,27 @@ case "$SUB" in
         echo "           'anamnesis resume' to re-enable."
         ;;
     resume)
-        rm -f "$PAUSE_FILE"
-        echo "anamnesis: resumed."
+        if [ -f "$PAUSE_FILE" ]; then
+            PAUSED_AT="$(cat "$PAUSE_FILE" 2>/dev/null || true)"
+            [ -n "$PAUSED_AT" ] || PAUSED_AT="unknown"
+            RESUMED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            # Record the blackout window (capture-gap lesson, 2026-08-09: a
+            # pause during incident response silently lost the most
+            # decision-dense sessions). The next SessionStart surfaces this
+            # once so the assistant can offer a backfill.
+            printf '{"paused_at":"%s","resumed_at":"%s","surfaced":false}\n' \
+                "$PAUSED_AT" "$RESUMED_AT" > "$ANAMNESIS_HOME/last_gap.json"
+            chmod 600 "$ANAMNESIS_HOME/last_gap.json" 2>/dev/null || true
+            rm -f "$PAUSE_FILE"
+            echo "anamnesis: resumed."
+            echo "  capture was OFF from $PAUSED_AT to $RESUMED_AT."
+            echo "  Sessions in that window were NOT captured. Your next"
+            echo "  assistant session will be told about the gap and can help"
+            echo "  backfill important decisions from it."
+        else
+            rm -f "$PAUSE_FILE"
+            echo "anamnesis: resumed (was not paused)."
+        fi
         ;;
     status)
         if [ ! -r "$CONFIG" ]; then
@@ -31,6 +50,9 @@ case "$SUB" in
             echo "anamnesis: PAUSED since $(cat "$PAUSE_FILE" 2>/dev/null)"
         else
             echo "anamnesis: active"
+        fi
+        if [ -r "$ANAMNESIS_HOME/last_gap.json" ] && command -v jq >/dev/null 2>&1; then
+            echo "  last capture gap: $(jq -r '"\(.paused_at) -> \(.resumed_at)"' < "$ANAMNESIS_HOME/last_gap.json" 2>/dev/null)"
         fi
         if command -v jq >/dev/null 2>&1; then
             echo "  handle:     $(jq -r '.handle' < "$CONFIG" 2>/dev/null)"
