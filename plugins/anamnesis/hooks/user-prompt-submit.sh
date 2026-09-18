@@ -14,6 +14,13 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=common.sh
 . "$HOOK_DIR/common.sh"
 
+# Capture opt-out for headless harness calls (2026-09-18): a desk or eval harness that drives
+# `claude -p` sets ANAMNESIS_CAPTURE=off so its calls are never captured as the owner's memories.
+# (289 harness-generated echoes landed in the owner's pool on 2026-09-16/17 before this existed.)
+if [ "${ANAMNESIS_CAPTURE:-on}" = "off" ]; then
+    exit 0
+fi
+
 anamnesis_check_pause
 anamnesis_load_config || exit 0
 
