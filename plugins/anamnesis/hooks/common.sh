@@ -337,6 +337,38 @@ anamnesis_queue_payload() {
 }
 
 # --- transcript state + locks ----------------------------------------------
+# ── Capture filter (ADMISSION-1, 2026-09-29) ──────────────────────────────────
+# Which transcript records are conversation. Decided by the record's own
+# structural fields, never by matching words in the text: Claude Code marks
+# every non-conversation record. Kept: assistant turns, and user turns that a
+# human typed. Dropped: queue-operation (queued task notifications/prompts),
+# user records whose origin is not human (task-notification, auto-continuation),
+# isMeta records (image stubs, injected caveats), isCompactSummary records (a
+# compaction summary restates the whole earlier session; capturing it re-ingests
+# everything already captured, as if it had just happened), system/attachment/
+# bookkeeping records, and slash-command envelopes (a user record whose text is
+# entirely a <command-*> or <local-command-*> wrapper, which Claude Code writes).
+# ANAMNESIS_CAPTURE_FILTER=off restores the old behavior (every record's text).
+ANAMNESIS_JQ_CONVERSATION='
+  def conv_text:
+    (.message.content // .content // .text // "") as $c
+    | if   ($c | type) == "array"  then [ $c[] | select(.type == "text") | (.text // empty) ] | join("\n")
+      elif ($c | type) == "string" then $c
+      else "" end;
+  def is_conversation:
+    if $filter != "on" then true
+    elif .type == "assistant" then true
+    elif .type == "user" then
+      ((.isMeta // false) | not)
+      and ((.isCompactSummary // false) | not)
+      and ((.origin == null) or (.origin.kind == "human"))
+      and ((conv_text | ltrimstr(" ") | test("^\\s*<(command-name|command-message|local-command-[a-z]+)>")) | not)
+    else false end;
+'
+anamnesis_capture_filter_mode() {
+    case "${ANAMNESIS_CAPTURE_FILTER:-on}" in off|OFF|0|false) echo off ;; *) echo on ;; esac
+}
+
 # Incremental Stop capture keeps a per-transcript high-water mark under
 # $ANAMNESIS_STATE_DIR, and a mkdir lock serializes the background workers
 # that update it (overlapping Stops must not double-send a delta). Lock

@@ -98,13 +98,11 @@ anamnesis_stop_worker() {
         # ([{"type":"text","text":"…"}]) as the memory — the "gibberish" on the
         # dashboard. Now we pull the text blocks' .text and drop thinking /
         # tool_use / tool_result. String content (user turns) passes through.
+        local filter_mode
+        filter_mode="$(anamnesis_capture_filter_mode)"
         transcript="$(printf '%s' "$delta_jsonl" \
-            | jq -r '
-                (.message.content // .content // .text // "") as $c
-                | if   ($c | type) == "array"  then
-                        [ $c[] | select(.type == "text") | (.text // empty) ] | join("\n")
-                  elif ($c | type) == "string" then $c
-                  else "" end
+            | jq -r --arg filter "$filter_mode" "$ANAMNESIS_JQ_CONVERSATION"'
+                select(is_conversation) | conv_text | select(length > 0)
               ' 2>/dev/null)"
 
         if [ -n "$transcript" ]; then
@@ -118,14 +116,8 @@ anamnesis_stop_worker() {
                 # this delta, a real local measurement.
                 if ! anamnesis_receipt_fired "capture"; then
                     local turns
-                    turns="$(printf '%s' "$delta_jsonl" | jq -s '
-                        [ .[]
-                          | (.message.content // .content // .text // "") as $c
-                          | (if   ($c | type) == "array"  then
-                                 ([ $c[] | select(.type == "text") | (.text // empty) ] | join("\n"))
-                             elif ($c | type) == "string" then $c
-                             else "" end)
-                          | select(length > 0) ] | length' 2>/dev/null)"
+                    turns="$(printf '%s' "$delta_jsonl" | jq -s --arg filter "$filter_mode" "$ANAMNESIS_JQ_CONVERSATION"'
+                        [ .[] | select(is_conversation) | conv_text | select(length > 0) ] | length' 2>/dev/null)"
                     case "$turns" in *[!0-9]*|"") turns=0 ;; esac
                     if [ "$turns" -gt 0 ]; then
                         mkdir -p "$ANAMNESIS_RECEIPT_DIR" 2>/dev/null || true
