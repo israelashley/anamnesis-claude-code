@@ -49,7 +49,9 @@ check "queued peer hand-back dropped" "$(grep -c 'Subagent hand-back' <<<"$ON")"
 check "queued task-notif dropped"  "$(grep -c '<task-id>b3' <<<"$ON")" 0
 check "api error record dropped"   "$(grep -c 'hit your session limit' <<<"$ON")" 0
 check "old-CC bare notif dropped"  "$(grep -c '<task-id>b4' <<<"$ON")" 0
-check "off: attachments not added" "$(grep -c 'glimmer should be the default' <<<"$OFF")" 0
+check "off: queued prompt not added" "$(grep -c 'glimmer should be the default' <<<"$OFF")" 0
+LEGACY="$(printf '%s' "$FIX" | sed '/^$/d' | jq -r '(.message.content // .content // .text // "") as $c | if ($c|type)=="array" then [ $c[] | select(.type=="text") | (.text // empty) ] | join("\n") elif ($c|type)=="string" then $c else "" end' | sed '/^$/d')"
+check "off: identical to the original extractor" "$([ "$(sed '/^$/d' <<<"$OFF")" = "$LEGACY" ] && echo same)" same
 check "system dropped"             "$(grep -c 'Conversation compacted' <<<"$ON")" 0
 check "ai-title dropped"           "$(grep -c 'Some title' <<<"$ON")" 0
 check "filter=off keeps old path"  "$(grep -c '<task-id>b1' <<<"$OFF")" 1

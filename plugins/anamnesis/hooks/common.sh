@@ -358,7 +358,7 @@ anamnesis_queue_payload() {
 # ANAMNESIS_CAPTURE_FILTER=off restores the old behavior (every record's text).
 ANAMNESIS_JQ_CONVERSATION='
   def conv_text:
-    if .type == "attachment" then (.attachment.prompt // "" | if type == "string" then . else "" end)
+    if $filter == "on" and .type == "attachment" then (.attachment.prompt // "" | if type == "string" then . else "" end)
     else
       (.message.content // .content // .text // "") as $c
       | if   ($c | type) == "array"  then [ $c[] | select(.type == "text") | (.text // empty) ] | join("\n")
@@ -368,7 +368,7 @@ ANAMNESIS_JQ_CONVERSATION='
   def envelope($open; $close):
     test("^\\s*<(" + $open + ")>") and test("</(" + $close + ")>\\s*$");
   def is_conversation:
-    if $filter != "on" then (.type != "attachment")
+    if $filter != "on" then true   # off = the original extractor exactly (Astra QC2 #9)
     elif .type == "assistant" then ((.isApiErrorMessage // false) | not)
     elif .type == "user" then
       ((.isMeta // false) | not)
