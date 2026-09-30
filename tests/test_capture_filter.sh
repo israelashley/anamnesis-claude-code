@@ -19,6 +19,7 @@ FIX='
 {"type":"user","message":{"role":"user","content":"<command-name>/model</command-name> <command-message>model</command-message>"}}
 {"type":"user","message":{"role":"user","content":"<local-command-stdout>Set model to Opus</local-command-stdout>"}}
 {"type":"user","isMeta":true,"message":{"role":"user","content":"Continue from where you left off."},"origin":{"kind":"auto-continuation"}}
+{"type":"user","message":{"role":"user","content":"<command-name> is the tag I want to ask about: why does it appear?"},"origin":{"kind":"human"}}
 {"type":"system","content":"Conversation compacted"}
 {"type":"attachment","attachment":{"type":"hook_additional_context","content":"<anamnesis-context>recalled</anamnesis-context>"}}
 {"type":"ai-title","content":"Some title"}
@@ -34,9 +35,10 @@ check "queue-operation dropped"    "$(grep -c '<task-id>b1' <<<"$ON")" 0
 check "task-notification dropped"  "$(grep -c '<task-id>b2' <<<"$ON")" 0
 check "isMeta image stub dropped"  "$(grep -c 'Image: source' <<<"$ON")" 0
 check "compact summary dropped"    "$(grep -c 'being continued' <<<"$ON")" 0
-check "slash command dropped"      "$(grep -c 'command-name' <<<"$ON")" 0
+check "slash command dropped"      "$(grep -c '/model</command-name>' <<<"$ON")" 0
 check "local-command dropped"      "$(grep -c 'Set model to Opus' <<<"$ON")" 0
 check "auto-continuation dropped"  "$(grep -c 'Continue from where' <<<"$ON")" 0
+check "human starting with a tag kept" "$(grep -c 'is the tag I want to ask about' <<<"$ON")" 1
 check "system dropped"             "$(grep -c 'Conversation compacted' <<<"$ON")" 0
 check "ai-title dropped"           "$(grep -c 'Some title' <<<"$ON")" 0
 check "filter=off keeps old path"  "$(grep -c '<task-id>b1' <<<"$OFF")" 1

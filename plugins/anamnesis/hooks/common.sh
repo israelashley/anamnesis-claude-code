@@ -346,8 +346,9 @@ anamnesis_queue_payload() {
 # isMeta records (image stubs, injected caveats), isCompactSummary records (a
 # compaction summary restates the whole earlier session; capturing it re-ingests
 # everything already captured, as if it had just happened), system/attachment/
-# bookkeeping records, and slash-command envelopes (a user record whose text is
-# entirely a <command-*> or <local-command-*> wrapper, which Claude Code writes).
+# bookkeeping records, and slash-command envelopes (a user record whose text both
+# opens and closes as a <command-*> or <local-command-*> wrapper, which Claude Code
+# writes; a human message that merely starts with such a tag is kept).
 # ANAMNESIS_CAPTURE_FILTER=off restores the old behavior (every record's text).
 ANAMNESIS_JQ_CONVERSATION='
   def conv_text:
@@ -362,7 +363,7 @@ ANAMNESIS_JQ_CONVERSATION='
       ((.isMeta // false) | not)
       and ((.isCompactSummary // false) | not)
       and ((.origin == null) or (.origin.kind == "human"))
-      and ((conv_text | ltrimstr(" ") | test("^\\s*<(command-name|command-message|local-command-[a-z]+)>")) | not)
+      and ((conv_text | test("^\\s*<(command-name|command-message|local-command-[a-z]+)>") and test("</(command-[a-z]+|local-command-[a-z]+)>\\s*$")) | not)
     else false end;
 '
 anamnesis_capture_filter_mode() {
