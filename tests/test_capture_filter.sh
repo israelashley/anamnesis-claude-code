@@ -20,6 +20,11 @@ FIX='
 {"type":"user","message":{"role":"user","content":"<local-command-stdout>Set model to Opus</local-command-stdout>"}}
 {"type":"user","isMeta":true,"message":{"role":"user","content":"Continue from where you left off."},"origin":{"kind":"auto-continuation"}}
 {"type":"user","message":{"role":"user","content":"<command-name> is the tag I want to ask about: why does it appear?"},"origin":{"kind":"human"}}
+{"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","prompt":"Also, glimmer should be the default for Tyche.","origin":{"kind":"human"}}}
+{"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","prompt":"[Subagent hand-back] review written","origin":{"kind":"peer","from":"a1"}}}
+{"type":"attachment","attachment":{"type":"queued_command","commandMode":"task-notification","prompt":"<task-notification><task-id>b3</task-id></task-notification>"}}
+{"type":"assistant","isApiErrorMessage":true,"message":{"role":"assistant","content":[{"type":"text","text":"You have hit your session limit"}]}}
+{"type":"user","message":{"role":"user","content":"<task-notification><task-id>b4</task-id><status>completed</status></task-notification>"}}
 {"type":"system","content":"Conversation compacted"}
 {"type":"attachment","attachment":{"type":"hook_additional_context","content":"<anamnesis-context>recalled</anamnesis-context>"}}
 {"type":"ai-title","content":"Some title"}
@@ -39,6 +44,12 @@ check "slash command dropped"      "$(grep -c '/model</command-name>' <<<"$ON")"
 check "local-command dropped"      "$(grep -c 'Set model to Opus' <<<"$ON")" 0
 check "auto-continuation dropped"  "$(grep -c 'Continue from where' <<<"$ON")" 0
 check "human starting with a tag kept" "$(grep -c 'is the tag I want to ask about' <<<"$ON")" 1
+check "queued human prompt kept"   "$(grep -c 'glimmer should be the default' <<<"$ON")" 1
+check "queued peer hand-back dropped" "$(grep -c 'Subagent hand-back' <<<"$ON")" 0
+check "queued task-notif dropped"  "$(grep -c '<task-id>b3' <<<"$ON")" 0
+check "api error record dropped"   "$(grep -c 'hit your session limit' <<<"$ON")" 0
+check "old-CC bare notif dropped"  "$(grep -c '<task-id>b4' <<<"$ON")" 0
+check "off: attachments not added" "$(grep -c 'glimmer should be the default' <<<"$OFF")" 0
 check "system dropped"             "$(grep -c 'Conversation compacted' <<<"$ON")" 0
 check "ai-title dropped"           "$(grep -c 'Some title' <<<"$ON")" 0
 check "filter=off keeps old path"  "$(grep -c '<task-id>b1' <<<"$OFF")" 1

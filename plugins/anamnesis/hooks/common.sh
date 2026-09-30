@@ -349,21 +349,37 @@ anamnesis_queue_payload() {
 # bookkeeping records, and slash-command envelopes (a user record whose text both
 # opens and closes as a <command-*> or <local-command-*> wrapper, which Claude Code
 # writes; a human message that merely starts with such a tag is kept).
+# Also kept: a message the human typed while Claude was working, which Claude Code
+# records only as a queued_command attachment (origin.kind human); queued hand-backs
+# from subagents (origin.kind peer) are not the owner's words and are dropped. Also
+# dropped: synthetic assistant records (isApiErrorMessage: usage-limit and login
+# notices), and on old Claude Code versions without origin fields, a user record that
+# is entirely a <task-notification> envelope.
 # ANAMNESIS_CAPTURE_FILTER=off restores the old behavior (every record's text).
 ANAMNESIS_JQ_CONVERSATION='
   def conv_text:
-    (.message.content // .content // .text // "") as $c
-    | if   ($c | type) == "array"  then [ $c[] | select(.type == "text") | (.text // empty) ] | join("\n")
-      elif ($c | type) == "string" then $c
-      else "" end;
+    if .type == "attachment" then (.attachment.prompt // "" | if type == "string" then . else "" end)
+    else
+      (.message.content // .content // .text // "") as $c
+      | if   ($c | type) == "array"  then [ $c[] | select(.type == "text") | (.text // empty) ] | join("\n")
+        elif ($c | type) == "string" then $c
+        else "" end
+    end;
+  def envelope($open; $close):
+    test("^\\s*<(" + $open + ")>") and test("</(" + $close + ")>\\s*$");
   def is_conversation:
-    if $filter != "on" then true
-    elif .type == "assistant" then true
+    if $filter != "on" then (.type != "attachment")
+    elif .type == "assistant" then ((.isApiErrorMessage // false) | not)
     elif .type == "user" then
       ((.isMeta // false) | not)
       and ((.isCompactSummary // false) | not)
       and ((.origin == null) or (.origin.kind == "human"))
-      and ((conv_text | test("^\\s*<(command-name|command-message|local-command-[a-z]+)>") and test("</(command-[a-z]+|local-command-[a-z]+)>\\s*$")) | not)
+      and ((conv_text | envelope("command-name|command-message|local-command-[a-z]+"; "command-[a-z]+|local-command-[a-z]+")) | not)
+      and ((.origin != null) or ((conv_text | envelope("task-notification"; "task-notification")) | not))
+    elif .type == "attachment" then
+      .attachment.type == "queued_command"
+      and .attachment.commandMode == "prompt"
+      and (.attachment.origin.kind == "human")
     else false end;
 '
 anamnesis_capture_filter_mode() {
